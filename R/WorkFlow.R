@@ -59,37 +59,45 @@ dim(simu_ys)
 
 tryCatch({
   registerDoParallel(makeCluster(detectCores()))
-  simu_list <- data.frame(simu_lambdas,simu_ys) %>% data.matrix() %>% t
 
-  fit_model <- stan_model(file = "fit_data.stan")
+  simu_list <- t(data.matrix(data.frame(simu_lambdas, simu_ys)))
 
-  ensemble_output <- foreach(simu = simu_list, .combine = 'cbind') %dopar% {
-    simu_lambda <- simu_list[1]
-    simu_y <- simu_list[2:(N+1)]
+  # Compile the posterior fit model
+  fit_model = stan_model(file='fit_data.stan')
 
-    input_data <- list("N" = N, "y" = simu_y)
+  ensemble_output <- foreach(simu=simu_list,
+                             .combine='cbind') %dopar% {
+   simu_lambda <- simu[1]
+   simu_y <- simu[2:(N + 1)];
 
-    capture.output(library(rstan))
-    capture.output(fit <- sampling(fit_model, data = input_data,seed=4938483))
-    util <- new.env()
-    source("./R/stan_utility.R", local = util)
+   # Fit the simulated observation
+   input_data <- list("N" = N, "y" = simu_y)
 
-    warning_code <- util$check_all_diagnostics(fit, quiet = TRUE)
-    sbc_rank <- sum(simu_lambda<extract(fit)$lambda[seq(1,4000-8,8)])
+   capture.output(library(rstan))
+   capture.output(fit <- sampling(fit_model, data=input_data, seed=4938483))
 
-    s <- summary(fit, probs = c(), pars = "lambda")$summary
-    post_mean_lambda <- s[,1]
-    post_sd_lamda <- s[,3]
+   # Compute diagnostics
+   util <- new.env()
+   source('stan_utility.R', local=util)
 
-    prior_sd_lambda <- 6.44787
+   warning_code <- util$check_all_diagnostics(fit, quiet=TRUE)
 
-    z_score <- (post_mean_lambda - simu_lambda) / post_sd_lamda
-    shrinkage <- 1-(post_sd_lamda / prior_sd_lambda)^2
-    c(warning_code, sbc_rank, z_score, shrinkage)
-  }
+   # Compute rank of prior draw with respect to thinned posterior draws
+   sbc_rank <- sum(simu_lambda < extract(fit)$lambda[seq(1, 4000 - 8, 8)])
 
-},finally = {stopImplicitCluster()})
+   # Compute posterior sensitivities
+   s <- summary(fit, probs = c(), pars='lambda')$summary
+   post_mean_lambda <- s[,1]
+   post_sd_lambda <- s[,3]
 
+   prior_sd_lambda <- 6.44787
+
+   z_score <- (post_mean_lambda - simu_lambda) / post_sd_lambda
+   shrinkage <- 1 - (post_sd_lambda / prior_sd_lambda)**2
+
+   c(warning_code, sbc_rank, z_score, shrinkage)
+                             }
+}, finally={ stopImplicitCluster() })
 ## warning code
 sum(ensemble_output[1,])
 
