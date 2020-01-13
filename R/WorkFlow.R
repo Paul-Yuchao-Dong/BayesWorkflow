@@ -1,8 +1,10 @@
+library(magrittr)
 library(rstan)
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
 library(foreach)
 library(doParallel)
+
 util <- new.env()
 source("./R/stan_utility.R", local = util)
 c_light <- c("#DCBCBC")
@@ -50,3 +52,60 @@ hist(simu_ys[1,])
 hist(simu_ys[2,], add = T)
 hist(simu_ys[3,], add = T)
 
+length(simu_ys[simu_ys > 25]) / length(simu_ys)
+dim(simu_ys)
+
+## Evaluate simulated fits
+
+tryCatch({
+  registerDoParallel(makeCluster(detectCores()))
+  simu_list <- data.frame(simu_lambdas,simu_ys) %>% data.matrix() %>% t
+
+  fit_model <- stan_model(file = "fit_data.stan")
+
+  ensemble_output <- foreach(simu = simu_list, .combine = 'cbind') %dopar% {
+    simu_lambda <- simu_list[1]
+    simu_y <- simu_list[2:(N+1)]
+
+    input_data <- list("N" = N, "y" = simu_y)
+
+    capture.output(library(rstan))
+    capture.output(fit <- sampling(fit_model, data = input_data,seed=4938483))
+    util <- new.env()
+    source("./R/stan_utility.R", local = util)
+
+    warning_code <- util$check_all_diagnostics(fit, quiet = TRUE)
+    sbc_rank <- sum(simu_lambda<extract(fit)$lambda[seq(1,4000-8,8)])
+
+    s <- summary(fit, probs = c(), pars = "lambda")$summary
+    post_mean_lambda <- s[,1]
+    post_sd_lamda <- s[,3]
+
+    prior_sd_lambda <- 6.44787
+
+    z_score <- (post_mean_lambda - simu_lambda) / post_sd_lamda
+    shrinkage <- 1-(post_sd_lamda / prior_sd_lambda)^2
+    c(warning_code, sbc_rank, z_score, shrinkage)
+  }
+
+},finally = {stopImplicitCluster()})
+
+## warning code
+sum(ensemble_output[1,])
+
+## simulation based calibration
+
+sbc_rank <- ensemble_output[2,]
+sbc_hist <- hist(sbc_rank, seq(0, 500, 25) - 0.5,
+                 col=c_dark, border=c_dark_highlight, plot=FALSE)
+plot(sbc_hist, main="", xlab="Prior Rank", yaxt='n', ylab="")
+low <- qbinom(0.005, R, 1 / 20)
+mid <- qbinom(0.5, R, 1 / 20)
+high <- qbinom(0.995, R, 1 / 20)
+bar_x <- c(-10, 510, 500, 510, -10, 0, -10)
+bar_y <- c(high, high, mid, low, low, mid, high)
+
+polygon(bar_x, bar_y, col=c("#DDDDDD"), border=NA)
+segments(x0=0, x1=500, y0=mid, y1=mid, col=c("#999999"), lwd=2)
+
+plot(sbc_hist, col=c_dark, border=c_dark_highlight, add=T)
