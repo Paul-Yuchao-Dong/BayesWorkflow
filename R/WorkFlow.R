@@ -62,28 +62,34 @@ tryCatch({
 
   simu_list <- t(data.matrix(data.frame(simu_lambdas, simu_ys)))
 
-  # Compile the posterior fit model
-  fit_model = stan_model(file='fit_data.stan')
+  util <- new.env()
+  source("./R/stan_utility.R", local = util)
+
+  ensemble_output <- foreach(simu = simu_list, .combine = 'cbind') %dopar% {
+    simu_lambda <- simu[1]
+    simu_y <- simu[2:(N+1)]
 
   ensemble_output <- foreach(simu=simu_list,
                              .combine='cbind') %dopar% {
    simu_lambda <- simu[1]
    simu_y <- simu[2:(N + 1)];
 
-   # Fit the simulated observation
-   input_data <- list("N" = N, "y" = simu_y)
+    capture.output(library(rstan))
+    capture.output(fit <- sampling(fit_model, data = input_data,seed=4938483))
 
-   capture.output(library(rstan))
-   capture.output(fit <- sampling(fit_model, data=input_data, seed=4938483))
-
-   # Compute diagnostics
-   util <- new.env()
-   source('stan_utility.R', local=util)
+    warning_code <- util$check_all_diagnostics(fit, quiet = TRUE)
+    sbc_rank <- sum(simu_lambda<extract(fit)$lambda[seq(1,4000-8,8)])
+   ### I don't understand why this rank is expected to be Uniform[1,500], shouldn't fit process make it Normal(250, sigma)?
+    s <- summary(fit, probs = c(), pars = "lambda")$summary
+    post_mean_lambda <- s[,1]
+    post_sd_lambda <- s[,3]
 
    warning_code <- util$check_all_diagnostics(fit, quiet=TRUE)
 
-   # Compute rank of prior draw with respect to thinned posterior draws
-   sbc_rank <- sum(simu_lambda < extract(fit)$lambda[seq(1, 4000 - 8, 8)])
+    z_score <- (post_mean_lambda - simu_lambda) / post_sd_lambda
+    shrinkage <- 1-(post_sd_lambda / prior_sd_lambda)^2
+    c(warning_code, sbc_rank, z_score, shrinkage)
+  }
 
    # Compute posterior sensitivities
    s <- summary(fit, probs = c(), pars='lambda')$summary
@@ -117,3 +123,11 @@ polygon(bar_x, bar_y, col=c("#DDDDDD"), border=NA)
 segments(x0=0, x1=500, y0=mid, y1=mid, col=c("#999999"), lwd=2)
 
 plot(sbc_hist, col=c_dark, border=c_dark_highlight, add=T)
+
+z_score <- ensemble_output[3,]
+shrinkage <- ensemble_output[4,]
+
+plot(shrinkage, z_score)
+## z_score concentrated around 0, which is good
+## shrinkage towards one meaning the post_sd_lambda is much smaller than the prior, effective fitting
+## if there's a question that can be quatified as
