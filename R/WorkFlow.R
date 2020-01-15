@@ -131,3 +131,25 @@ plot(shrinkage, z_score)
 ## z_score concentrated around 0, which is good
 ## shrinkage towards one meaning the post_sd_lambda is much smaller than the prior, effective fitting
 ## if there's a question that can be quatified as
+
+# Step 7. Fit the observations and evaluate
+
+input_data <- read_rdump("./data/workflow.data.R")
+fit <- stan("fit_data_ppc.stan", data = input_data, seed = 4938483, refresh = 2000)
+util$check_all_diagnostics(fit)
+params <- extract(fit)
+hist(params$lambda)
+## Looks reasonable
+
+# Step 8. Analyze the Posterior Predictive Distribution
+hist(input_data$y)
+
+dim(params$y_ppc)
+
+library(bayesplot)
+ppc_data(input_data$y, params$y_ppc)
+ppc_dens_overlay(input_data$y, params$y_ppc[seq(1,4000,100),])
+## the ppc resulted in an excess of zeros, model cannot capture so many zeros and a bulk away from zeros
+## the compromised fit failed to capture either, need to improve the model
+
+# Try again
