@@ -1,4 +1,5 @@
 library(magrittr)
+library(dplyr)
 library(rstan)
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
@@ -153,3 +154,57 @@ ppc_dens_overlay(input_data$y, params$y_ppc[seq(1,4000,100),])
 ## the compromised fit failed to capture either, need to improve the model
 
 # Try again
+
+# Step 1. Conceptual analysis
+
+## an excess of zeros may mean not all detectors are in working order.
+
+# Step 2. Define observations
+
+## no change
+
+# Step 3. Identify relevant summary stats
+
+## no change
+
+# Step 4. Build a model
+
+## Zero inflated model
+
+# Step 5. Identify New Summary Stats
+
+## Histogram can still cover the additional zeros, could consider the number of observed zeros or ratio
+
+# Step 6. Analyze the joint ensemble
+
+R <- 500
+N <- 1000
+
+simu_data <- list("N" = N)
+fit <- stan("sample_joint_ensemble2.stan", algorithm = "Fixed_param",
+            data = simu_data, iter = R, warmup = 0, chains = 1, refresh = R,
+            seed=4838282
+            )
+library(tidybayes)
+fit %>%
+  spread_draws(y[n]) -> simu_ys
+fit %>%
+  spread_draws(theta) -> simu_thetas
+
+fit %>%
+  spread_draws(lambda) -> simu_lambdas
+
+fit %>%
+  spread_draws(y[lambda], theta) %>%
+  ungroup() %>%
+  select(-lambda) %>%
+  left_join(simu_lambdas, by=c(".chain", ".iteration",".draw"))
+
+extract(fit)$y ->simu_ys_matrix
+simu_ys_matrix[1,] %>% glimpse()
+simu_ys %>%
+  ungroup() %>%
+  filter(.iteration == 1) %>%
+  pull(y) %>%
+  [[1]] %>%
+  glimpse()
